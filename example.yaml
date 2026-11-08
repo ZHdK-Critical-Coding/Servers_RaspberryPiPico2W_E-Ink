@@ -4,4 +4,6 @@ author: Urs Hofer
 technology: "Arduino"
 maincategory: utilities
 category: servers
-related: P5_Output_EInk
+related:
+  - P5_Output_EInk
+  - Servers_RaspberriPi

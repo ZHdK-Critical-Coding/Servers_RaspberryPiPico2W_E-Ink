@@ -1,5 +1,7 @@
 # Arduino: E-Ink Server
 
+[Deutsch](README_DE.md)
+
 Firmware for a Raspberry Pi Pico 2 W that drives up to four Waveshare 4.2"
 e-paper displays (V1, 400 × 300, four greys). It does the same job as the
 `screen-websocket` server from
