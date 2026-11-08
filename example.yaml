@@ -1,0 +1,7 @@
+name: "E-Ink Server"
+date: 2026-11-08
+author: Urs Hofer
+technology: "Arduino"
+maincategory: utilities
+category: servers
+related: P5_Output_EInk

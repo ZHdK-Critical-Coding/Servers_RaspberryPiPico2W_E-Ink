@@ -1,0 +1,3 @@
+Vendored from https://github.com/bitbank2/PNGdec v1.1.7 (commit 2855e78), Apache-2.0.
+Only change: PNG_MAX_BUFFERED_PIXELS raised in PNGdec.h so 400-800 px wide RGBA images decode.
+Second change: png.inl renamed to png_inl.h (the Arduino IDE does not copy .inl files from a sketch's src folder).
