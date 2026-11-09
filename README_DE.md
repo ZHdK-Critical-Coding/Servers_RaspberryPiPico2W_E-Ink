@@ -35,7 +35,10 @@ Beim Start zeigt jedes Display seine eigenen Adressen.
 ### Schneller Modus: `?norefresh=true`
 
 Normalerweise ist jedes Bild ein voller Refresh: Das Display flackert und
-zeigt vier Graustufen, was einige Sekunden dauert. Mit `?norefresh=true` am
+zeigt vier Graustufen, was einige Sekunden dauert. Vor dem Bild wird das
+Display mit einer kräftigen Schwarz-Weiß-Welle weiß geblitzt, damit keine Reste des vorherigen
+Bildes bleiben (`CLEAN_FULL_REFRESH` in `PicoEInk.ino`; `false` macht den
+vollen Refresh schneller, mit leichten Geisterbildern). Mit `?norefresh=true` am
 Ende der Adresse zeichnet der Pico nur die Pixel neu, die sich seit dem
 letzten Bild geändert haben (Teil-Refresh), ohne Flackern:
 

@@ -157,6 +157,27 @@ class EPD4in2 {
     delay(1);
   }
 
+  // One cleaning pass, without waiting: every pixel is driven through the
+  // full black/white waveform and ends black (toBlack) or white. The
+  // 4-grey waveform alone is too short to erase the previous image; one
+  // white pass before it removes the ghost.
+  // Old data is always "black", so every pixel gets a strong LUT
+  // (0x24 for black -> black, 0x22 for black -> white).
+  void startCleanPass(bool toBlack) {
+    cmd(0x92);  // leave partial mode, VCOM settings as in init()
+    cmd(0x82);
+    data(0x12);
+    cmd(0x50);
+    data(0x97);
+    setLut();
+    cmd(0x10);
+    for (size_t i = 0; i < WIDTH * HEIGHT / 8; i++) data(0x00);
+    cmd(0x13);
+    for (size_t i = 0; i < WIDTH * HEIGHT / 8; i++) data(toBlack ? 0x00 : 0xFF);
+    cmd(0x12);
+    delay(1);
+  }
+
   // display_4Gray() from epd4in2.py, without waiting for the end of the
   // refresh. The frame buffer can be reused as soon as this returns.
   void startDisplay4Gray(const uint8_t *fb) {

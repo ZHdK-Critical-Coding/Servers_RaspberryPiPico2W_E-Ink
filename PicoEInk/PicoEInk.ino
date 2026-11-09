@@ -122,6 +122,20 @@ static void reply(Connection &c, const char *text) {
   if (c.used && c.client.connected()) ws::sendText(c.client, text);
 }
 
+// Cleans the panels in mask (bit i = display i + 1) before a full refresh:
+// one strong black -> white flash, all panels in parallel. Removes the
+// ghost of the previous image. Takes about 1-2 seconds; set
+// CLEAN_FULL_REFRESH to false for faster full refreshes with slight
+// ghosting.
+const bool CLEAN_FULL_REFRESH = true;
+static void cleanPanels(uint32_t mask) {
+  if (!CLEAN_FULL_REFRESH) return;
+  for (int i = 0; i < NUM_DISPLAYS; i++)
+    if (mask & (1u << i)) panels[i].dev->startCleanPass(false);
+  for (int i = 0; i < NUM_DISPLAYS; i++)
+    if (mask & (1u << i)) panels[i].dev->waitIdle();
+}
+
 // Starts a refresh of panel p with fb::buffer. partial: only the changed
 // pixels. Returns false if partial and nothing changed.
 //
@@ -183,9 +197,16 @@ static void showMessage(const char *title, const char *const lines[], int count)
   fb::clear();
   fb::text(title, 12, 12, true);
   for (int i = 0; i < count; i++) fb::text(lines[i], 12, 70 + i * 28);
-  for (auto &p : panels) {
+  uint32_t mask = 0;
+  for (int i = 0; i < NUM_DISPLAYS; i++) {
+    Panel &p = panels[i];
     if (!p.present) continue;
     if (p.refreshing) p.dev->waitIdle();
+    mask |= 1u << i;
+  }
+  cleanPanels(mask);
+  for (auto &p : panels) {
+    if (!p.present) continue;
     startRefresh(p, false);
     p.showsImage = true;
   }
@@ -193,12 +214,18 @@ static void showMessage(const char *title, const char *const lines[], int count)
 
 // Shows the status screen on every display that has no image yet.
 static void showStatusScreens() {
+  uint32_t mask = 0;
   for (int i = 0; i < NUM_DISPLAYS; i++) {
     Panel &p = panels[i];
     if (!p.present || p.showsImage) continue;
     if (p.refreshing && !p.dev->waitIdle()) continue;
+    mask |= 1u << i;
+  }
+  cleanPanels(mask);  // all in parallel
+  for (int i = 0; i < NUM_DISPLAYS; i++) {
+    if (!(mask & (1u << i))) continue;
     drawStatus(i + 1);
-    startRefresh(p, false);
+    startRefresh(panels[i], false);
   }
 }
 
@@ -215,7 +242,9 @@ static void initDisplays() {
     p.present = p.dev->init();  // a missing display times out in init()
     Serial.printf("Display %d: %s\n", i + 1, p.present ? "found" : "not connected");
   }
-  // Clear all at once, like the Pi server does before the address screen
+  // Clear all at once, like the Pi server does before the address screen.
+  // With CLEAN_FULL_REFRESH the status screens clean the panels anyway.
+  if (CLEAN_FULL_REFRESH) return;
   for (auto &p : panels)
     if (p.present) p.dev->startClear();
   for (auto &p : panels)
@@ -257,12 +286,20 @@ static void showImage(Connection &c, size_t len) {
 
   c.failed = false;
   bool found = false;
+  uint32_t targets = 0, full = 0;
   for (int i = 0; i < NUM_DISPLAYS; i++) {
     if (c.target != 0 && c.target != i + 1) continue;
     Panel &p = panels[i];
     if (!p.present) continue;
     found = true;
     if (p.refreshing) refreshDone(i, p.dev->waitIdle());  // previous image first
+    targets |= 1u << i;
+    if (!c.partial || !p.shown) full |= 1u << i;  // see startRefresh
+  }
+  cleanPanels(full);
+  for (int i = 0; i < NUM_DISPLAYS; i++) {
+    if (!(targets & (1u << i))) continue;
+    Panel &p = panels[i];
     p.showsImage = true;
     if (startRefresh(p, c.partial)) c.pending |= 1u << i;
   }

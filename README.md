@@ -35,7 +35,10 @@ On startup every display shows its own addresses.
 ### Fast mode: `?norefresh=true`
 
 By default every image is a full refresh: the panel flashes and shows four
-greys, which takes a few seconds. With `?norefresh=true` at the end of the
+greys, which takes a few seconds. Before the image, the panel is flashed
+to white with a strong black/white waveform, so no trace of the previous image remains
+(`CLEAN_FULL_REFRESH` in `PicoEInk.ino`; set it to `false` for faster full
+refreshes with slight ghosting). With `?norefresh=true` at the end of the
 address, the Pico only redraws the pixels that changed since the last
 image (partial refresh), without flashing:
 
