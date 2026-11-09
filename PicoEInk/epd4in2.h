@@ -74,6 +74,15 @@ static const uint8_t gray_lut_bb[] = {
   0x20, 0x14, 0x0A, 0x00, 0x00, 0x01, 0x50, 0x13, 0x01, 0x00, 0x00, 0x01,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+// Partial refresh (EPD_4IN2_Partial_lut_*1 from the Waveshare C driver):
+// one short phase. Old = new: not driven at all. Changed: driven to
+// black or white. The rest of each table is zero.
+static const uint8_t partial_lut_vcom[44] = {0x00, 0x19, 0x01, 0x00, 0x00, 0x01};
+static const uint8_t partial_lut_ww[42] = {0x00, 0x19, 0x01, 0x00, 0x00, 0x01};
+static const uint8_t partial_lut_bw[42] = {0x80, 0x19, 0x01, 0x00, 0x00, 0x01};
+static const uint8_t partial_lut_wb[42] = {0x40, 0x19, 0x01, 0x00, 0x00, 0x01};
+static const uint8_t partial_lut_bb[42] = {0x00, 0x19, 0x01, 0x00, 0x00, 0x01};
 // clang-format on
 
 class EPD4in2 {
@@ -151,7 +160,11 @@ class EPD4in2 {
   // display_4Gray() from epd4in2.py, without waiting for the end of the
   // refresh. The frame buffer can be reused as soon as this returns.
   void startDisplay4Gray(const uint8_t *fb) {
-    cmd(0x92);
+    cmd(0x92);  // leave partial mode, VCOM settings as in init()
+    cmd(0x82);
+    data(0x12);
+    cmd(0x50);
+    data(0x97);
     setLut();
     cmd(0x10);  // old data: white and light grey = 1
     sendPlane(fb, 1);
@@ -160,6 +173,57 @@ class EPD4in2 {
     graySetLut();
     cmd(0x12);
     delay(200);
+  }
+
+  // Fast partial refresh, without waiting (EPD_4IN2_PartialDisplay from
+  // the Waveshare C driver). prev is what the panel shows now, fb the new
+  // image (both 2 bits per pixel). Only the rectangle around the changed
+  // pixels is sent, and only changed pixels are driven: to black (levels
+  // 0, 1) or white (2, 3). Everything else stays as it is, greys included.
+  // No flashing, but ghosting builds up; a full refresh cleans it.
+  // Returns false if nothing changed (then no refresh is started).
+  bool startPartial(const uint8_t *prev, const uint8_t *fb) {
+    const int ROW = WIDTH / 4;  // bytes per row
+    int x0 = WIDTH, x1 = -1, y0 = -1, y1 = -1;
+    for (int y = 0; y < HEIGHT; y++) {
+      const uint8_t *a = prev + y * ROW, *b = fb + y * ROW;
+      if (!memcmp(a, b, ROW)) continue;
+      if (y0 < 0) y0 = y;
+      y1 = y;
+      for (int i = 0; i < ROW; i++)
+        if (a[i] != b[i]) {
+          if (i * 4 < x0) x0 = i * 4;
+          if (i * 4 + 3 > x1) x1 = i * 4 + 3;
+        }
+    }
+    if (y0 < 0) return false;
+    x0 &= ~7;            // the window is in whole bytes (8 pixels)
+    x1 = (x1 | 7) + 1;   // exclusive
+    y1 += 1;
+
+    cmd(0x82);  // VCOM DC
+    data(0x08);
+    cmd(0x50);  // VCOM and data interval: 1 = black
+    data(0x47);
+    partialSetLut();
+    cmd(0x91);  // partial mode
+    cmd(0x90);  // window
+    data(x0 >> 8);
+    data(x0 & 0xff);
+    data((x1 - 1) >> 8);
+    data((x1 - 1) & 0xff);
+    data(y0 >> 8);
+    data(y0 & 0xff);
+    data((y1 - 1) >> 8);
+    data((y1 - 1) & 0xff);
+    data(0x28);
+    cmd(0x10);  // old data
+    sendWindow(prev, fb, x0, x1, y0, y1, true);
+    cmd(0x13);  // new data
+    sendWindow(prev, fb, x0, x1, y0, y1, false);
+    cmd(0x12);
+    delay(10);
+    return true;
   }
 
   // BUSY is LOW while the panel works. 0x71 (get status) is sent first,
@@ -225,6 +289,38 @@ class EPD4in2 {
     dataArray(gray_lut_bb, 42);
     cmd(0x25);
     dataArray(gray_lut_ww, 42);
+  }
+
+  void partialSetLut() {
+    cmd(0x20);
+    dataArray(partial_lut_vcom, 44);
+    cmd(0x21);
+    dataArray(partial_lut_ww, 42);
+    cmd(0x22);
+    dataArray(partial_lut_bw, 42);
+    cmd(0x23);
+    dataArray(partial_lut_wb, 42);
+    cmd(0x24);
+    dataArray(partial_lut_bb, 42);
+  }
+
+  // Window for startPartial, 1 bit per pixel, 1 = black. New data: the
+  // new image. Old data: the same, except where the level changed, there
+  // it is the opposite, so the panel drives exactly those pixels.
+  void sendWindow(const uint8_t *prev, const uint8_t *fb, int x0, int x1, int y0, int y1, bool old) {
+    for (int y = y0; y < y1; y++)
+      for (int x = x0; x < x1; x += 8) {
+        uint8_t out = 0;
+        for (int k = 0; k < 8; k++) {
+          size_t i = y * WIDTH + x + k;
+          uint8_t shift = 6 - 2 * (i & 3);
+          uint8_t n = (fb[i >> 2] >> shift) & 3;
+          uint8_t black = n < 2;
+          if (old && n != ((prev[i >> 2] >> shift) & 3)) black ^= 1;
+          out = (out << 1) | black;
+        }
+        data(out);
+      }
   }
 
   // One bit plane: 8 pixels per byte, bit = (level >> shift) & 1.

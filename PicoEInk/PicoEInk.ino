@@ -14,7 +14,8 @@
 //         the IP shown on the display.
 //
 // Displays: ws://<address>:8765/1, /2, /3, /4. "/" = display 1, "/all" =
-// same image on every display.
+// same image on every display. Add "?norefresh=true" for fast partial
+// refreshes (only changed pixels, black and white, may leave ghosts).
 //
 // Settings (number, Wi-Fi): press BOOTSEL while the Pico runs, it appears
 // as a USB drive with config.txt (config_mode.h). Or use the serial port
@@ -83,6 +84,7 @@ struct Panel {
   bool refreshing;
   bool showsImage;  // false while it shows the status screen
   uint32_t started;
+  uint8_t *shown;   // what the panel shows (for partial refreshes)
 };
 Panel panels[NUM_DISPLAYS];
 
@@ -93,6 +95,7 @@ struct Connection {
   uint32_t pending;  // displays still refreshing for this client (bit mask)
   bool failed;       // one of them timed out
   uint32_t since;
+  bool partial;      // ?norefresh=true: only refresh changed pixels
 };
 Connection conns[MAX_CLIENTS];
 
@@ -117,6 +120,29 @@ static String url(const String &host, int display) {
 static void reply(Connection &c, const char *text) {
   Serial.println(text);
   if (c.used && c.client.connected()) ws::sendText(c.client, text);
+}
+
+// Starts a refresh of panel p with fb::buffer. partial: only the changed
+// pixels. Returns false if partial and nothing changed.
+//
+// A partial refresh needs a copy of what the panel shows (30 KB). It is
+// made on the first partial request for that panel, which is still a full
+// refresh. If there is not enough memory, partial requests stay full ones.
+static bool startRefresh(Panel &p, bool partial) {
+  const int RESERVE = 48 * 1024;  // heap left for the network
+  bool started = true;
+  if (partial && p.shown) {
+    started = p.dev->startPartial(p.shown, fb::buffer);
+  } else {
+    if (partial && rp2040.getFreeHeap() > epd::FB_SIZE + RESERVE) p.shown = (uint8_t *)malloc(epd::FB_SIZE);
+    p.dev->startDisplay4Gray(fb::buffer);
+  }
+  if (p.shown) memcpy(p.shown, fb::buffer, epd::FB_SIZE);
+  if (started) {
+    p.refreshing = true;
+    p.started = millis();
+  }
+  return started;
 }
 
 // Status screen for display d (1-based) into the frame buffer.
@@ -160,10 +186,8 @@ static void showMessage(const char *title, const char *const lines[], int count)
   for (auto &p : panels) {
     if (!p.present) continue;
     if (p.refreshing) p.dev->waitIdle();
-    p.dev->startDisplay4Gray(fb::buffer);
-    p.refreshing = true;
+    startRefresh(p, false);
     p.showsImage = true;
-    p.started = millis();
   }
 }
 
@@ -174,9 +198,7 @@ static void showStatusScreens() {
     if (!p.present || p.showsImage) continue;
     if (p.refreshing && !p.dev->waitIdle()) continue;
     drawStatus(i + 1);
-    p.dev->startDisplay4Gray(fb::buffer);
-    p.refreshing = true;
-    p.started = millis();
+    startRefresh(p, false);
   }
 }
 
@@ -234,18 +256,19 @@ static void showImage(Connection &c, size_t len) {
                 (unsigned)len, millis() - t0);
 
   c.failed = false;
+  bool found = false;
   for (int i = 0; i < NUM_DISPLAYS; i++) {
     if (c.target != 0 && c.target != i + 1) continue;
     Panel &p = panels[i];
     if (!p.present) continue;
+    found = true;
     if (p.refreshing) refreshDone(i, p.dev->waitIdle());  // previous image first
-    p.dev->startDisplay4Gray(fb::buffer);
-    p.refreshing = true;
     p.showsImage = true;
-    p.started = millis();
-    c.pending |= 1u << i;
+    if (startRefresh(p, c.partial)) c.pending |= 1u << i;
   }
-  if (c.pending == 0) {
+  if (found && c.pending == 0) {
+    reply(c, "Image displayed");  // partial and nothing changed
+  } else if (!found) {
     char e[48];
     snprintf(e, sizeof(e), "error: display %d not connected", c.target);
     reply(c, c.target == 0 ? "error: no display connected" : e);
@@ -281,7 +304,8 @@ static void acceptClients() {
     return;
   }
   char *q = strchr(path, '?');
-  if (q) *q = 0;
+  if (q) *q++ = 0;
+  bool partial = q && (strstr(q, "norefresh=true") || strstr(q, "norefresh=1"));
 
   // Free slot, otherwise replace the oldest connection
   Connection *slot = nullptr;
@@ -293,8 +317,9 @@ static void acceptClients() {
       if (c.since < slot->since) slot = &c;
     slot->client.stop();
   }
-  *slot = Connection{incoming, true, parseTarget(path), 0, false, millis()};
-  Serial.printf("Client %s connected to %s\n", incoming.remoteIP().toString().c_str(), path);
+  *slot = Connection{incoming, true, parseTarget(path), 0, false, millis(), partial};
+  Serial.printf("Client %s connected to %s%s\n", incoming.remoteIP().toString().c_str(), path,
+                partial ? " (norefresh)" : "");
   if (slot->target < 0) {
     reply(*slot, "error: unknown display, use /1 ... /4 or /all");
   } else if (slot->target > 0 && !panels[slot->target - 1].present) {

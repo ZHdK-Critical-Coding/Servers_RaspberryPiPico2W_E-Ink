@@ -32,6 +32,27 @@ const displayConnection = 'ws://eink-3.local:8765'     // Pico 3, über WLAN
 
 Beim Start zeigt jedes Display seine eigenen Adressen.
 
+### Schneller Modus: `?norefresh=true`
+
+Normalerweise ist jedes Bild ein voller Refresh: Das Display flackert und
+zeigt vier Graustufen, was einige Sekunden dauert. Mit `?norefresh=true` am
+Ende der Adresse zeichnet der Pico nur die Pixel neu, die sich seit dem
+letzten Bild geändert haben (Teil-Refresh), ohne Flackern:
+
+```js
+const displayConnection = 'ws://192.168.7.1:8765/1?norefresh=true'
+```
+
+- Viel schneller, und je weniger sich ändert, desto schneller: Nur das
+  Rechteck um die geänderten Pixel geht an das Display.
+- Geänderte Pixel werden nur schwarz oder weiss (dunkelgrau → schwarz,
+  hellgrau → weiss). Unveränderte Pixel bleiben, wie sie sind, auch Grau.
+- Mit der Zeit bleiben Schatten alter Bilder stehen (Ghosting). Eine
+  Verbindung ohne den Schlüssel macht einen vollen Refresh und räumt auf.
+- Das erste Bild in diesem Modus ist pro Display noch ein voller Refresh.
+  Hat sich nichts geändert, antwortet der Pico sofort mit `Image displayed`.
+- Jedes Display, das diesen Modus benutzt hat, braucht 30 KB mehr RAM.
+
 ## Mehrere Picos: die ID
 
 Jeder Pico hat eine ID von 1 bis 200. Sie bestimmt:

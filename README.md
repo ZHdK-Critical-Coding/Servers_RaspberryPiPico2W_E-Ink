@@ -32,6 +32,27 @@ const displayConnection = 'ws://eink-3.local:8765'     // Pico 3, via Wi-Fi
 
 On startup every display shows its own addresses.
 
+### Fast mode: `?norefresh=true`
+
+By default every image is a full refresh: the panel flashes and shows four
+greys, which takes a few seconds. With `?norefresh=true` at the end of the
+address, the Pico only redraws the pixels that changed since the last
+image (partial refresh), without flashing:
+
+```js
+const displayConnection = 'ws://192.168.7.1:8765/1?norefresh=true'
+```
+
+- Much faster, and the less changes, the faster: only the rectangle
+  around the changed pixels is sent to the panel.
+- Changed pixels become black or white only (dark grey → black, light
+  grey → white). Unchanged pixels stay as they are, greys included.
+- Ghosting builds up over time. A connection without the key does a full
+  refresh and cleans the panel.
+- The first image in this mode on a display is still a full refresh. If
+  nothing changed, the Pico answers `Image displayed` at once.
+- Each display that has used this mode uses 30 KB of extra RAM.
+
 ## Several Picos: the ID
 
 Every Pico has an ID from 1 to 200. It sets:
